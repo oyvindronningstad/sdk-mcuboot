@@ -1,38 +1,43 @@
-# The size of this partition is defined by the kconfig symbol
-# CONFIG_PM_PARTITION_SIZE_MCUBOOT
-mcuboot:
-  placement:
-    before: [mcuboot_primary]
+FLASH:
+  # The size of this partition is defined by the kconfig symbol
+  # CONFIG_PM_PARTITION_SIZE_MCUBOOT
+  mcuboot:
+    placement:
+      before: [mcuboot_primary]
 
-mcuboot_primary_app:
-  # All images to be placed in MCUboot's slot 0 should be placed in this
-  # partition
-  span: [app]
+  mcuboot_primary_app:
+    # All images to be placed in MCUboot's slot 0 should be placed in this
+    # partition
+    span: [app]
 
-mcuboot_primary:
-  span: [mcuboot_pad, mcuboot_primary_app]
+  mcuboot_primary:
+    span: [mcuboot_pad, mcuboot_primary_app]
 
-mcuboot_secondary:
-  share_size: [mcuboot_primary]
-  placement:
-    after:
-      [mcuboot_primary]
+  mcuboot_secondary:
+    share_size: [mcuboot_primary]
+    placement:
+      after:
+        [mcuboot_primary]
 
-# The size of this partition is defined by the kconfig symbol
-# CONFIG_PM_PARTITION_SIZE_MCUBOOT_SCRATCH
-mcuboot_scratch:
-  placement:
-    after: [app]
+  # The size of this partition is defined by the kconfig symbol
+  # CONFIG_PM_PARTITION_SIZE_MCUBOOT_SCRATCH
+  mcuboot_scratch:
+    placement:
+      after: [app]
 
-# The size of this partition is defined by the kconfig symbol
-# CONFIG_PM_PARTITION_SIZE_MCUBOOT_STORAGE
-mcuboot_storage:
-  placement:
-    after: [mcuboot_scratch]
+  # The size of this partition is defined by the kconfig symbol
+  # CONFIG_PM_PARTITION_SIZE_MCUBOOT_STORAGE
+  mcuboot_storage:
+    placement:
+      after: [mcuboot_scratch]
 
-# Padding placed before image to boot
-mcuboot_pad:
-    # MCUboot pad must be placed before the 'spm' partition if that is present.
-    # If 'spm' partition is not present, it must be placed before the 'app'.
-  placement:
-    before: [mcuboot_primary_app]
+  # Padding placed before image to boot
+  mcuboot_pad:
+      # MCUboot pad must be placed before the 'spm' partition if that is present.
+      # If 'spm' partition is not present, it must be placed before the 'app'.
+    placement:
+      before: [mcuboot_primary_app]
+
+SRAM:
+  mcuboot:
+    span: [app]
