@@ -25,6 +25,7 @@
 #include "sysflash/sysflash.h"
 
 #include "bootutil/bootutil_log.h"
+#include "cbor_encode.h"
 
 #ifdef __ZEPHYR__
 #include <power/reboot.h>
@@ -33,8 +34,6 @@
 #include <drivers/flash.h>
 #include <sys/crc.h>
 #include <sys/base64.h>
-#include <tinycbor/cbor.h>
-#include <tinycbor/cbor_buf_reader.h>
 #else
 #include <bsp/bsp.h>
 #include <hal/hal_system.h>
@@ -97,28 +96,13 @@ static struct nmgr_hdr *bs_hdr;
 
 static char bs_obuf[BOOT_SERIAL_OUT_MAX];
 
-static int bs_cbor_writer(struct cbor_encoder_writer *, const char *data,
-  int len);
 static void boot_serial_output(void);
 
-static struct cbor_encoder_writer bs_writer = {
-    .write = bs_cbor_writer
+static cbor_state_backups_t dummy_backups;
+static cbor_state_t cbor_state = {
+    .backups = &dummy_backups
 };
-static CborEncoder bs_root;
-static CborEncoder bs_rsp;
 
-int
-bs_cbor_writer(struct cbor_encoder_writer *cew, const char *data, int len)
-{
-    if (cew->bytes_written + len > sizeof(bs_obuf)) {
-        return CborErrorOutOfMemory;
-    }
-
-    memcpy(&bs_obuf[cew->bytes_written], data, len);
-    cew->bytes_written += len;
-
-    return 0;
-}
 
 /*
  * Convert version into string without use of snprintf().
@@ -172,17 +156,14 @@ bs_list_img_ver(char *dst, int maxlen, struct image_version *ver)
 static void
 bs_list(char *buf, int len)
 {
-    CborEncoder images;
-    CborEncoder image;
     struct image_header hdr;
     uint8_t tmpbuf[64];
-    int slot, area_id;
+    uint32_t slot, area_id;
     const struct flash_area *fap;
     uint8_t image_index;
 
-    cbor_encoder_create_map(&bs_root, &bs_rsp, CborIndefiniteLength);
-    cbor_encode_text_stringz(&bs_rsp, "images");
-    cbor_encoder_create_array(&bs_rsp, &images, CborIndefiniteLength);
+    tstrx_put(&cbor_state, "images");
+    list_start_encode(&cbor_state, 5);
     image_index = 0;
     IMAGES_ITER(image_index) {
         for (slot = 0; slot < 2; slot++) {
@@ -201,24 +182,25 @@ bs_list(char *buf, int len)
             }
             flash_area_close(fap);
 
-            cbor_encoder_create_map(&images, &image, CborIndefiniteLength);
+            map_start_encode(&cbor_state, 20);
 
 #if (BOOT_IMAGE_NUMBER > 1)
-            cbor_encode_text_stringz(&image, "image");
-            cbor_encode_int(&image, image_index);
+            tstrx_put(&cbor_state, "image");
+            uintx32_put(&cbor_state, image_index);
 #endif
 
-            cbor_encode_text_stringz(&image, "slot");
-            cbor_encode_int(&image, slot);
-            cbor_encode_text_stringz(&image, "version");
+            tstrx_put(&cbor_state, "slot");
+            uintx32_put(&cbor_state, slot);
+            tstrx_put(&cbor_state, "version");
 
             bs_list_img_ver((char *)tmpbuf, sizeof(tmpbuf), &hdr.ih_ver);
-            cbor_encode_text_stringz(&image, (char *)tmpbuf);
-            cbor_encoder_close_container(&images, &image);
+            tstrx_put_term(&cbor_state, (char *)tmpbuf);
+            tstrx_encode(&cbor_state, 
+                &(cbor_string_type_t){.value = tmpbuf, len = strlen(tmpbuf)});
+            map_end_encode(&cbor_state, 20);
         }
     }
-    cbor_encoder_close_container(&bs_rsp, &images);
-    cbor_encoder_close_container(&bs_root, &bs_rsp);
+    list_end_encode(&cbor_state, 5);
     boot_serial_output();
 }
 
@@ -403,14 +385,14 @@ bs_upload(char *buf, int len)
 
 out:
     BOOT_LOG_INF("RX: 0x%x", rc);
-    cbor_encoder_create_map(&bs_root, &bs_rsp, CborIndefiniteLength);
-    cbor_encode_text_stringz(&bs_rsp, "rc");
-    cbor_encode_int(&bs_rsp, rc);
+    map_start_encode(&cbor_state, 10);
+    tstrx_put(&cbor_state, "rc");
+    uintx32_put(&cbor_state, rc);
     if (rc == 0) {
-        cbor_encode_text_stringz(&bs_rsp, "off");
-        cbor_encode_uint(&bs_rsp, curr_off);
+        tstrx_put(&cbor_state, "off");
+        uintx32_put(&cbor_state, curr_off);
     }
-    cbor_encoder_close_container(&bs_root, &bs_rsp);
+    map_end_encode(&cbor_state, 10);
 
     boot_serial_output();
     flash_area_close(fap);
@@ -422,10 +404,10 @@ out:
 static void
 bs_empty_rsp(char *buf, int len)
 {
-    cbor_encoder_create_map(&bs_root, &bs_rsp, CborIndefiniteLength);
-    cbor_encode_text_stringz(&bs_rsp, "rc");
-    cbor_encode_int(&bs_rsp, 0);
-    cbor_encoder_close_container(&bs_root, &bs_rsp);
+    map_start_encode(&cbor_state, 10);
+    tstrx_put(&cbor_state, "rc");
+    uintx32_put(&cbor_state, 0);
+    map_end_encode(&cbor_state, 10);
     boot_serial_output();
 }
 
@@ -468,8 +450,8 @@ boot_serial_input(char *buf, int len)
     buf += sizeof(*hdr);
     len -= sizeof(*hdr);
 
-    bs_writer.bytes_written = 0;
-    cbor_encoder_init(&bs_root, &bs_writer, 0);
+    cbor_state.payload_mut = bs_obuf;
+    cbor_state.payload_end = bs_obuf + sizeof(bs_obuf);
 
     /*
      * Limited support for commands.
@@ -512,7 +494,7 @@ boot_serial_output(void)
     char encoded_buf[BASE64_ENCODE_SIZE(BOOT_SERIAL_OUT_MAX)];
 
     data = bs_obuf;
-    len = bs_writer.bytes_written;
+    len = (uint32_t)cbor_state.payload_mut - (uint32_t)bs_obuf;
 
     bs_hdr->nh_op++;
     bs_hdr->nh_flags = 0;
